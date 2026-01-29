@@ -175,7 +175,7 @@ class EvoBootstrap:
         from langchain_anthropic import ChatAnthropic
 
         # Create backend with access to workspace (including its own source)
-        backend = FilesystemBackend(base_path=str(WORKSPACE))
+        backend = FilesystemBackend(root_dir=str(WORKSPACE))
 
         # Get model
         model = ChatAnthropic(
