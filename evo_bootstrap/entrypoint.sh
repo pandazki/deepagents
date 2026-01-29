@@ -17,10 +17,19 @@ echo "   Branch:     ${BRANCH}"
 echo "   Organism:   ${ORGANISM}"
 echo ""
 
-# Clone the genome (deepagents repo)
-echo "🧬 Cloning genome from ${GITHUB_REPO}:${BRANCH}..."
 cd /workspace
-git clone --branch "$BRANCH" --depth 1 "$REPO_URL" .
+
+# Check if already cloned
+if [ -d ".git" ]; then
+    echo "🔄 Genome already present, pulling latest..."
+    git fetch origin "$BRANCH"
+    git reset --hard "origin/$BRANCH"
+    echo "   Updated to latest $BRANCH"
+else
+    # Clone fresh
+    echo "🧬 Cloning genome from ${GITHUB_REPO}:${BRANCH}..."
+    git clone --branch "$BRANCH" --depth 1 "$REPO_URL" .
+fi
 
 # Configure git for future commits (mutations)
 git config user.email "evo-agent@evolution.local"

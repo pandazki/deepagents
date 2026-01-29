@@ -356,21 +356,48 @@ class EvoBootstrap:
 
             # 3. 解析 Agent 的响应
             try:
-                # 尝试提取 JSON
-                json_match = re.search(r'\{[\s\S]*\}', analysis_result)
-                if json_match:
-                    analysis = json.loads(json_match.group())
-                else:
+                # 尝试多种方式提取 JSON
+                analysis = None
+
+                # 方法1: 尝试提取 ```json ... ``` 代码块
+                code_block_match = re.search(r'```json\s*([\s\S]*?)\s*```', analysis_result)
+                if code_block_match:
+                    try:
+                        analysis = json.loads(code_block_match.group(1))
+                    except json.JSONDecodeError:
+                        pass
+
+                # 方法2: 尝试提取最后一个完整的 JSON 对象
+                if not analysis:
+                    # 找所有可能的 JSON 对象
+                    json_matches = re.findall(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', analysis_result)
+                    for match in reversed(json_matches):
+                        try:
+                            parsed = json.loads(match)
+                            if "should_propose" in parsed:
+                                analysis = parsed
+                                break
+                        except json.JSONDecodeError:
+                            continue
+
+                # 方法3: 尝试解析整个响应
+                if not analysis:
+                    try:
+                        analysis = json.loads(analysis_result)
+                    except json.JSONDecodeError:
+                        pass
+
+                if not analysis:
                     return web.json_response({
                         "status": "analysis_failed",
                         "message": "Could not parse agent response as JSON",
-                        "raw_response": analysis_result[:500]
+                        "raw_response": analysis_result[:1000]
                     })
-            except json.JSONDecodeError as e:
+            except Exception as e:
                 return web.json_response({
                     "status": "analysis_failed",
-                    "message": f"JSON parse error: {e}",
-                    "raw_response": analysis_result[:500]
+                    "message": f"Parse error: {e}",
+                    "raw_response": analysis_result[:1000]
                 })
 
             # 4. 如果 Agent 建议提出 Proposal
