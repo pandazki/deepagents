@@ -17,6 +17,10 @@ import os
 import sys
 import asyncio
 import logging
+import time
+import uuid
+import json
+import re
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -71,18 +75,26 @@ class EvoBootstrap:
         self.app.router.add_post("/propose", self.propose_handler)
         self.app.router.add_get("/proposals", self.list_proposals_handler)
         self.app.router.add_get("/genome", self.genome_handler)
+        # Reflection-driven evolution
+        self.app.router.add_post("/reflect", self.reflect_handler)
+        self.app.router.add_post("/feedback", self.feedback_handler)
+        self.app.router.add_get("/logs", self.logs_handler)
         # /mutate is now restricted to orchestrator use
         self.app.router.add_post("/mutate", self.mutate_handler)
 
     async def health_handler(self, request: web.Request) -> web.Response:
         """Health check endpoint"""
+        from evo_bootstrap.reflector import get_log_stats
+        log_stats = get_log_stats()
+
         return web.json_response({
             "status": "alive",
             "organism_id": self.organism_id,
             "genome_branch": self.genome_branch,
             "generation": self.generation,
             "deepagents_loaded": self.agent is not None,
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "execution_stats": log_stats
         })
 
     async def task_handler(self, request: web.Request) -> web.Response:
@@ -93,26 +105,56 @@ class EvoBootstrap:
                 status=503
             )
 
+        from evo_bootstrap.reflector import record_task_execution
+
+        task_id = f"task_{uuid.uuid4().hex[:8]}"
+        start_time = time.time()
+
         try:
             data = await request.json()
             task = data.get("task", "")
 
-            logger.info(f"Executing task: {task[:100]}...")
+            logger.info(f"Executing task {task_id}: {task[:100]}...")
 
             # Run the agent
             result = await self._run_agent(task)
 
+            # Record successful execution
+            duration_ms = int((time.time() - start_time) * 1000)
+            record_task_execution(
+                task_id=task_id,
+                task_summary=task,
+                duration_ms=duration_ms,
+                status="success"
+            )
+
             return web.json_response({
                 "status": "completed",
+                "task_id": task_id,
                 "result": result,
+                "duration_ms": duration_ms,
                 "organism_id": self.organism_id,
                 "generation": self.generation
             })
 
         except Exception as e:
             logger.exception("Task execution failed")
+
+            # Record failed execution
+            duration_ms = int((time.time() - start_time) * 1000)
+            record_task_execution(
+                task_id=task_id,
+                task_summary=data.get("task", "unknown") if 'data' in dir() else "unknown",
+                duration_ms=duration_ms,
+                status="failure",
+                error={
+                    "type": type(e).__name__,
+                    "message": str(e)
+                }
+            )
+
             return web.json_response(
-                {"error": str(e)},
+                {"error": str(e), "task_id": task_id},
                 status=500
             )
 
@@ -269,6 +311,160 @@ class EvoBootstrap:
             "generation": self.generation,
             "genome_path": str(deepagents_src),
             "files": genome_files
+        })
+
+    async def reflect_handler(self, request: web.Request) -> web.Response:
+        """
+        触发反思流程，分析执行日志并可能生成改进 Proposal。
+
+        只应在 Agent idle 时调用，不影响正在执行的任务。
+        这是反思驱动进化的核心入口。
+        """
+        from evo_bootstrap.reflector import (
+            extract_issues_for_reflection,
+            build_reflection_prompt
+        )
+        from evo_bootstrap.proposer import (
+            validate_proposal,
+            create_github_issue,
+            save_proposal_locally
+        )
+
+        try:
+            data = await request.json() if request.body_exists else {}
+            lookback_hours = data.get("lookback_hours", 24)
+            min_occurrences = data.get("min_occurrences", 2)
+
+            # 1. 提取问题
+            issues = extract_issues_for_reflection(
+                lookback_hours=lookback_hours,
+                min_occurrences=min_occurrences
+            )
+
+            if not issues.get("has_issues"):
+                return web.json_response({
+                    "status": "no_issues",
+                    "message": "No significant issues found in recent logs",
+                    "summary": issues.get("summary", {})
+                })
+
+            # 2. 让 Agent 分析并生成 Proposal
+            reflection_prompt = build_reflection_prompt(issues)
+            logger.info("Running reflection analysis...")
+
+            analysis_result = await self._run_agent(reflection_prompt)
+
+            # 3. 解析 Agent 的响应
+            try:
+                # 尝试提取 JSON
+                json_match = re.search(r'\{[\s\S]*\}', analysis_result)
+                if json_match:
+                    analysis = json.loads(json_match.group())
+                else:
+                    return web.json_response({
+                        "status": "analysis_failed",
+                        "message": "Could not parse agent response as JSON",
+                        "raw_response": analysis_result[:500]
+                    })
+            except json.JSONDecodeError as e:
+                return web.json_response({
+                    "status": "analysis_failed",
+                    "message": f"JSON parse error: {e}",
+                    "raw_response": analysis_result[:500]
+                })
+
+            # 4. 如果 Agent 建议提出 Proposal
+            if analysis.get("should_propose") and analysis.get("proposal"):
+                proposal = validate_proposal(analysis["proposal"])
+
+                # 保存本地
+                local_path = await save_proposal_locally(
+                    proposal=proposal,
+                    organism_id=self.organism_id,
+                    generation=self.generation
+                )
+
+                # 尝试创建 GitHub Issue
+                try:
+                    issue_result = await create_github_issue(
+                        proposal=proposal,
+                        organism_id=self.organism_id,
+                        generation=self.generation,
+                        genome_branch=self.genome_branch
+                    )
+                    return web.json_response({
+                        "status": "proposal_created",
+                        "reasoning": analysis.get("reasoning"),
+                        "issue_url": issue_result["issue_url"],
+                        "issue_number": issue_result["issue_number"],
+                        "local_path": local_path
+                    })
+                except Exception as gh_error:
+                    return web.json_response({
+                        "status": "proposal_created_locally",
+                        "reasoning": analysis.get("reasoning"),
+                        "local_path": local_path,
+                        "github_error": str(gh_error)
+                    })
+            else:
+                return web.json_response({
+                    "status": "no_proposal",
+                    "reasoning": analysis.get("reasoning", "No valuable improvements identified"),
+                    "issues_analyzed": issues["summary"]
+                })
+
+        except Exception as e:
+            logger.exception("Reflection failed")
+            return web.json_response(
+                {"error": str(e)},
+                status=500
+            )
+
+    async def feedback_handler(self, request: web.Request) -> web.Response:
+        """
+        记录用户对任务执行的反馈。
+
+        用于收集负反馈，作为反思的数据来源。
+        """
+        from evo_bootstrap.reflector import record_user_feedback
+
+        try:
+            data = await request.json()
+            task_id = data.get("task_id")
+            feedback_type = data.get("type", "neutral")  # positive | negative | neutral
+            message = data.get("message", "")
+
+            if not task_id:
+                return web.json_response(
+                    {"error": "task_id is required"},
+                    status=400
+                )
+
+            record_user_feedback(task_id, feedback_type, message)
+
+            return web.json_response({
+                "status": "recorded",
+                "task_id": task_id,
+                "feedback_type": feedback_type
+            })
+
+        except Exception as e:
+            logger.exception("Failed to record feedback")
+            return web.json_response(
+                {"error": str(e)},
+                status=500
+            )
+
+    async def logs_handler(self, request: web.Request) -> web.Response:
+        """返回执行日志摘要"""
+        from evo_bootstrap.reflector import load_execution_log
+
+        log = load_execution_log()
+        return web.json_response({
+            "organism_id": self.organism_id,
+            "performance": log["performance"],
+            "recent_errors": log["errors"][-10:],
+            "recent_tasks": log["tasks"][-20:]
         })
 
     async def _run_agent(self, task: str) -> str:
