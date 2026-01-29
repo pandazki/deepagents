@@ -1,0 +1,21 @@
+# EvoAgent Chronicle - 进化编年史
+# 此文件记录 Agent 的进化历史，供后代学习
+
+genome_branch: evo-seed
+generation: 0
+created_at: "2025-01-29T00:00:00Z"
+
+# 重要事件记录
+events: []
+
+# 祖先经验教训（核心学习内容）
+learnings:
+  - "Genesis: First generation of evolving agent"
+  - "Always read CHRONICLE.yaml to learn from ancestors"
+  - "Propose minimal, targeted mutations for better survival"
+
+# 血统信息
+lineage:
+  parent: null
+  mutation_type: genesis
+  mutation_reason: "Initial seed agent"
