@@ -1,0 +1,30 @@
+# EvoAgent Evolution Chronicle
+# This file tracks the evolution history of this organism's genome
+
+generation: 0
+organism_id: seed
+branch: evo-seed
+created: "2025-01-29T00:00:00Z"
+
+description: |
+  Seed genome - Generation 0
+  This is the original deepagents library, unmodified.
+  Future mutations will modify the code and create new branches.
+
+mutations: []
+
+# Genome Information
+genome:
+  name: deepagents
+  version: 0.3.9
+  evolution_targets:
+    - graph.py
+    - middleware/filesystem.py
+    - middleware/subagents.py
+    - middleware/skills.py
+    - middleware/memory.py
+    - middleware/summarization.py
+    - backends/protocol.py
+    - backends/filesystem.py
+    - backends/sandbox.py
+    - backends/composite.py

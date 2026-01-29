@@ -1,13 +1,12 @@
-# EvoAgent Docker Compose
-# 用于本地测试种子 Agent
+# EvoAgent Docker Compose - deepagents as genome
+# The genome (libs/deepagents/) evolves, bootstrap is fixed
 
 version: '3.8'
 
 services:
-  # 种子 Agent 沙盒
   evo-agent:
     build:
-      context: ./evo_agent
+      context: ./evo_bootstrap
       dockerfile: Dockerfile
     ports:
       - "8080:8080"
@@ -15,11 +14,9 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_REPO=${GITHUB_REPO:-pandazki/deepagents}
-      - ORGANISM_ID=${ORGANISM_ID:-org_seed}
       - GENOME_BRANCH=${GENOME_BRANCH:-evo-seed}
+      - ORGANISM_ID=${ORGANISM_ID:-org_seed}
     volumes:
-      # 可选：挂载本地代码用于开发
-      # - ./evo_agent:/workspace/evo_agent:ro
       - agent_workspace:/workspace
     restart: unless-stopped
     healthcheck:

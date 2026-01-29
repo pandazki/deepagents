@@ -1,0 +1,11 @@
+# EvoAgent Bootstrap Dependencies
+# These are FIXED - the bootstrap does not evolve
+
+# HTTP server
+aiohttp>=3.9.0
+
+# YAML for chronicle
+pyyaml>=6.0
+
+# Async support
+asyncio-throttle>=1.0.0
