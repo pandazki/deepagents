@@ -234,6 +234,9 @@ async def create_github_issue(
     # Use gh CLI to create issue (simpler than API)
     import subprocess
 
+    loop = asyncio.get_event_loop()
+
+    # First, try to create with labels
     cmd = [
         "gh", "issue", "create",
         "--repo", github_repo,
@@ -246,7 +249,6 @@ async def create_github_issue(
 
     logger.info(f"Creating GitHub issue: {title}")
 
-    loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
         None,
         lambda: subprocess.run(
@@ -256,6 +258,26 @@ async def create_github_issue(
             env={**os.environ, "GH_TOKEN": github_token}
         )
     )
+
+    # If labels failed, retry without labels
+    if result.returncode != 0 and "label" in result.stderr.lower():
+        logger.warning(f"Labels not found, retrying without labels: {result.stderr}")
+        cmd = [
+            "gh", "issue", "create",
+            "--repo", github_repo,
+            "--title", title,
+            "--body", body
+        ]
+        result = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "GH_TOKEN": github_token}
+            )
+        )
+        labels = []  # Clear labels since we couldn't add them
 
     if result.returncode != 0:
         logger.error(f"gh CLI error: {result.stderr}")
